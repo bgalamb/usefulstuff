@@ -1,0 +1,440 @@
+#!/bin/bash
+
+# prerequisites
+#---------------
+# 1)make sure that you have imported SAPNetCaG2 and SAPGlobalRoot certificated into the JVM where you want to run this script.
+# Otherwise you will get strange error message: PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target
+# Steps do do it:
+# keytool -import -alias SAPGlobalRoot -keystore $JAVA_HOME/jre/lib/security/cacerts -file ~/Downloads/certs/SAP\ Global\ Root\ CA.crt
+# keytool -import -alias SAPNetCAG2 -keystore $JAVA_HOME/jre/lib/security/cacerts -file ~/Downloads/certs/SAPNetCA_G2.crt
+# the default password for the JVM keystore is "changeit"
+#
+#2) Make sure to have added you public key to central jenkins, under https://xmake-mobile-dev.wdf.sap.corp:8443/me/configure
+#
+#3) Make sure to have downloaded jenkins-cli.jar from https://xmake-mobile-dev.wdf.sap.corp:8443/jnlpJars/jenkins-cli.jar
+#
+#
+
+
+if [ -z $1 ]; then
+    echo "You did not provide any parameters for this job!"
+    exit -1
+fi
+
+ACTION="build"
+every=0
+continueNext=0
+versionextension=""
+#ssh has been checked in to the repo
+SSH_KEY=../myssh/ssh/id_rsa
+
+XMAKEJENKINSURL="https://xmake-mobile-dev.wdf.sap.corp"
+
+XSCRIPTJOBNAME="odata-core-framework/ODataCoreFramework-com.sap.odata.core.framework-OD-darwinintel64_dev-darwinintel64_dev"
+FOUNDATIONJOBNAME="tango/Tango-com.sap.mobile.platform.client.hcp.sdk.ios.foundation-OD-darwinintel64_dev-darwinintel64_dev/"
+NETWORKINGJOBNAME="tango/Tango-com.sap.mobile.platform.client.hcp.sdk.ios.assistant.networking-OD-darwinintel64_dev_mac-darwinintel64_dev_mac"
+ODATAJOBNAME="tango/Tango-com.sap.mobile.platform.client.hcp.sdk.ios.odata-OD-darwinintel64_dev-darwinintel64_dev"
+OFFLINEODATAJOBNAME="offlineodata/com.sap.mobile.platform.offlineodata.ios-OD-darwinintel64_dev-darwinintel64_dev"
+UIJOBNAME="tango/Tango-com.sap.mobile.platform.client.hcp.sdk.ios.ui-OD-darwinintel64_dev-darwinintel64_dev"
+FLOWSJOBNAME="tango/Tango-com.sap.mobile.platform.client.hcp.sdk.ios.flows-OD-darwinintel64_dev-darwinintel64_dev"
+ASSISTANTJOBNAME="tango/Tango-com.sap.mobile.platform.client.hcp.sdk.ios.assistant-OD-darwinintel64_dev_mac-darwinintel64_dev_mac"
+DISTJOBNAME="tango/Tango-com.sap.mobile.platform.client.hcp.sdk.ios.dist-OD-darwinintel64_dev_mac-darwinintel64_dev_mac"
+MLJOBNAME="tango/Tango-com.sap.mobile.platform.client.hcp.sdk.ios.ml-OD-darwinintel64_dev-darwinintel64_dev"
+
+chmod 400 $SSH_KEY
+echo "File attribute changed for private key!"
+
+while [ "$1" != "" ]; do
+    case $1 in
+          -a | --action )    shift
+                             ACTION=$1
+                             ;;
+          -e | --every )
+                            every=1
+                            ;;
+          -b | --branchName ) shift
+                              branchName=$1
+                              ;;
+          -c | --continue )
+                              continueNext=1
+                              ;;
+          -v | --versionextension )  shift
+                                     versionextension=$1
+                                     ;;
+
+          #which branches to build
+
+          --ODCbranchName )  shift
+                             ODataCoreBranchName=$1
+                             ;;
+
+          --FNDbranchName )  shift
+                             FoundationBranchName=$1
+                             ;;
+
+          --MCNbranchName )  shift
+                             MacNetworkingBranchName=$1
+                             ;;
+
+          --ODbranchName )  shift
+                            SAPOdataBranchName=$1
+                            ;;
+
+          --UIbranchName )  shift
+                            SAPFioriBranchName=$1
+                            ;;
+
+          --FLOWSbranchName )  shift
+                            FlowsBranchName=$1
+                            ;;
+
+          --OFLODbranchName )  shift
+                               OfflineODataBranchName=$1
+                               ;;
+
+          --ASSIbranchName )  shift
+                              SAPAssistantBranchName=$1
+                              ;;
+
+          --DMGbranchName )   shift
+                              DMGBranchName=$1
+                              ;;
+
+          --MLbranchName )   shift
+                              MLBranchName=$1
+                              ;;
+
+          #what to to build
+
+          --buildODC )
+              BuildODataCore=1
+              ;;
+
+          --buildFND )
+              BuildFoundation=1
+              ;;
+
+          --buildMCN )
+              BuildMacNetworking=1
+              ;;
+
+          --buildOD )
+              BuildSAPOdata=1
+              ;;
+
+          --buildUI )
+              BuildSAPFiori=1
+              ;;
+
+          --buildOFLOD )
+              BuildOfflineOData=1
+              ;;
+
+          --buildFLOWS )
+              BuildFioriFlows=1
+              ;;
+
+          --buildASSI )
+              BuildSAPAssistant=1
+              ;;
+
+
+          --buildDMG)
+              BuildDMG=1
+              ;;
+
+
+          --buildML)
+              BuildML=1
+              ;;
+
+
+          * )             echo "Please look the implementaion of this script to find how to use it!"
+                          exit 1
+    esac
+    shift
+done
+
+if [ "$versionextension" == "" ]; then
+  echo "Plesae specify the version extension!"
+  exit -1
+fi
+
+#set defaults for branch name
+
+if [ "$branchName" == "" ]; then
+  echo "Plesae specify the branch name!"
+  exit -1
+fi
+
+if [ "$ODataCoreBranchName" == "" ]; then
+  ODataCoreBranchName=$branchName
+fi
+
+if [ "$FoundationBranchName" == "" ]; then
+  FoundationBranchName=$branchName
+fi
+
+if [ "$MacNetworkingBranchName" == "" ]; then
+  MacNetworkingBranchName=$branchName
+fi
+
+if [ "$SAPOdataBranchName" == "" ]; then
+  SAPOdataBranchName=$branchName
+fi
+
+if [ "$SAPFioriBranchName" == "" ]; then
+  SAPFioriBranchName=$branchName
+fi
+
+if [ "$FlowsBranchName" == "" ]; then
+  FlowsBranchName=$branchName
+fi
+
+if [ "$OfflineODataBranchName" == "" ]; then
+  OfflineODataBranchName=$branchName
+fi
+
+if [ "$SAPAssistantBranchName" == "" ]; then
+  SAPAssistantBranchName=$branchName
+fi
+
+if [ "$DMGBranchName" == "" ]; then
+   DMGBranchName=$branchName
+fi
+
+if [ "$MLBranchName" == "" ]; then
+   MLBranchName=$branchName
+fi
+
+#set defaults for what to build
+
+if [ "$every" == "" ]; then
+  echo "Please specify which components to build!"
+fi
+
+#if build Odata Core is not set explicitly
+if [ "$BuildODataCore" == "" ]; then
+    #if we should continue from previously finished job
+    if [ $continueNext == 2 ]; then
+      BuildODataCore=1
+
+    #previously finished job does not say anything, take the value of the every variable
+    else
+      BuildODataCore=$every
+    fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+if [ "$BuildFoundation" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildFoundation=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+    BuildFoundation=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+if [ "$BuildMacNetworking" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildMacNetworking=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+      BuildMacNetworking=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+if [ "$BuildSAPOdata" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildSAPOdata=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+    BuildSAPOdata=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+if [ "$BuildSAPFiori" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildSAPFiori=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+    BuildSAPFiori=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+if [ "$BuildFioriFlows" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildFioriFlows=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+    BuildFioriFlows=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+if [ "$BuildML" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildML=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+    BuildML=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+
+if [ "$BuildOfflineOData" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildOfflineOData=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+    BuildOfflineOData=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+if [ "$BuildSAPAssistant" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildSAPAssistant=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+    BuildSAPAssistant=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+if [ "$BuildDMG" == "" ]; then
+  #if we should continue from previously finished job
+  if [ $continueNext == 2 ]; then
+    BuildDMG=1
+  #previously finished job does not say anything, take the value of the every variable
+  else
+    BuildDMG=$every
+  fi
+elif [ $continueNext == 1 ]; then
+  continueNext=2
+fi
+
+#if [ "$#" -lt 3 ]; then
+#  echo "The number of arguments is not correct"
+#  echo "Please enter the branch name and version extension and the action to perform as 1st, 2nd and 3d parameter for the job."
+#  echo "eg. master ms-06-01 build, rel-1.2 ms-06-01 build_and_deploy"
+#  exit -1
+#fi
+
+# Getting jenkins-cli dynamically
+echo "Downloading jar file for Jenkins command line interface..."
+curl -O https://xmake-mobile-dev.wdf.sap.corp:8443/jnlpJars/jenkins-cli.jar
+
+#start the build for ODATACore
+echo "Starting build for SAP OData Core Framework."
+if [ $BuildODataCore == 1 ]; then
+  java  -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $XSCRIPTJOBNAME -p TREEISH=$ODataCoreBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+#start the build for foundation
+echo "Starting build for SAP Foundation and SAP Common Frameworks."
+if [ $BuildFoundation == 1 ]; then
+  java  -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $FOUNDATIONJOBNAME -p TREEISH=$FoundationBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+#start the build for MacNetworking
+echo "Starting build for SAP Mac Networking Frameworks."
+if [ $BuildMacNetworking == 1 ]; then
+    java  -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $NETWORKINGJOBNAME -p TREEISH=$MacNetworkingBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+#start the build for OData
+echo "Starting build for SAP OData Framework."
+if [ $BuildSAPOdata == 1 ]; then
+  java  -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $ODATAJOBNAME -p TREEISH=$SAPOdataBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+#start the build for UIKit
+echo "Starting build for SAP Fiori Framework."
+if [ $BuildSAPFiori == 1 ]; then
+  java -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $UIJOBNAME -p TREEISH=$SAPFioriBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+#start the build for UIKit
+echo "Starting build for SAP Fiori Flows."
+if [ $BuildFioriFlows == 1 ]; then
+  java -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $FLOWSJOBNAME -p TREEISH=$FlowsBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+#start the build for ML
+echo "Starting build for SAP ML."
+if [ $BuildML == 1 ]; then
+  java -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $MLJOBNAME -p TREEISH=$MLBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+#start the build for Offline OData
+echo "Starting build for SAP Offline OData Framework."
+if [ $BuildOfflineOData == 1 ]; then
+  java -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $OFFLINEODATAJOBNAME -p TREEISH=$OfflineODataBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -p TAG_EXTENSION=ios-1 -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+#start the build for Assistant
+echo "Starting build for SAP Cloud Platform SDK for iOS Assistant."
+if [ $BuildSAPAssistant == 1 ]; then
+  java -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $ASSISTANTJOBNAME -p TREEISH=$SAPAssistantBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+#start the build for DMG
+echo "Starting build for SAP Distributable."
+if [ $BuildDMG == 1 ]; then
+  java -jar jenkins-cli.jar -s $XMAKEJENKINSURL -i $SSH_KEY -remoting build $DISTJOBNAME -p TREEISH=$DMGBranchName -p BUILD_DEPLOY=$ACTION -p VERSION_EXTENSION=$versionextension -f
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+else
+  echo "skipped."
+fi
+
+echo "~~~~~~~~BUILD FINISHED SUCCESSFULY~~~~~~~~~"
+echo "~~~~~ Milestone built with version $2 ~~~~~"
